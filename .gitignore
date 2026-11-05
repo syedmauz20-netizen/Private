@@ -63,3 +63,9 @@ dist/
 *.db
 *.db-shm
 *.db-wal
+
+/cloudflare/wrangler.local.jsonc
+
+# Candidate Drizzle output; reviewed Supabase migrations are tracked separately.
+/supabase/generated/
+/.pnpm-store/

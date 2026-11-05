@@ -1,12 +1,12 @@
-import {database,sameOrigin} from '../../../lib/session';
-import {hashPassword,validPassword} from '../../../lib/password';
+import {sameOrigin} from '../../../lib/session';
+import {manageEmployee} from '../../../lib/employees';
 import {validateFormSchema,readTaskForm} from '../../../lib/task-forms';
 import {canAccessTask,canSetTaskStatus} from '../../../lib/portal-permissions';
 import {portalActor as actor} from '../../../lib/portal-auth';
 import {getDb} from '../../../db';
 import {members,tasks,taskComments,applications,activity,taskChecklist,taskDrafts,workSubmissions} from '../../../db/schema';
 import {eq,and,desc,inArray} from 'drizzle-orm';
-const OWNER='syedmauz20@gmail.com';
+
 const statuses=['todo','in_progress','review','completed'];
 async function log(a:any,kind:string,entityId:string,summary:string){await getDb().insert(activity).values({id:crypto.randomUUID(),actorId:a.userId,actorName:a.displayName,kind,entityId,summary,createdAt:new Date().toISOString()})}
 
@@ -16,22 +16,7 @@ if(x.action==='update_candidate'){if(!a.admin)return fail('Superadmin access req
 if(x.action==='update_member'){if(!a.admin)return fail('Superadmin access required',403);if(!str(x.name,120)||typeof x.jobTitle!=='string'||x.jobTitle.length>150||typeof x.department!=='string'||x.department.length>100||typeof x.timezone!=='string'||x.timezone.length>100||!Number.isInteger(Number(x.taskCapacity))||Number(x.taskCapacity)<1||Number(x.taskCapacity)>100)return fail('Check employee profile fields.');const member=(await db.select().from(members).where(eq(members.id,x.id)))[0];if(!member)return fail('Employee not found',404);await db.update(members).set({name:x.name.trim(),jobTitle:x.jobTitle,department:x.department,timezone:x.timezone,taskCapacity:String(x.taskCapacity)}).where(eq(members.id,x.id));await log(a,'team',x.id,`Updated employee profile: ${x.name}`);return Response.json({ok:true});}
 if(['add_member','reset_password','toggle_member'].includes(x.action)){
 if(!a.admin)return fail('Admin access required',403);
-const raw=database();
-if(x.action==='toggle_member'){
-if(!['yes','no'].includes(x.active))return fail('Invalid access setting');
-await raw.batch([raw.prepare('UPDATE members SET active=? WHERE id=?').bind(x.active,x.id),raw.prepare('DELETE FROM auth_sessions WHERE account_id IN (SELECT id FROM auth_accounts WHERE member_id=?)').bind(x.id)]);
-}else{
-if(!validPassword(x.temporaryPassword))return fail('Temporary password must be 12-128 characters.');
-const hash=await hashPassword(x.temporaryPassword);
-if(x.action==='add_member'){
-if(!str(x.name,120)||!str(x.email,200)||!/^\S+@\S+\.\S+$/.test(x.email))return fail('Enter a valid name and email.');
-const email=x.email.trim().toLowerCase();if(email===OWNER)return fail('This email is reserved for the administrator.');
-if(await raw.prepare('SELECT id FROM members WHERE lower(email)=?').bind(email).first())return fail('Employee already exists. Use Reset password to enable an existing account.');
-const id=crypto.randomUUID();await raw.batch([raw.prepare('INSERT INTO members (id,name,email,created_at) VALUES (?,?,?,?)').bind(id,x.name.trim(),email,now),raw.prepare("INSERT INTO auth_accounts (id,email,role,member_id,password_hash) VALUES (?,?,'employee',?,?)").bind(crypto.randomUUID(),email,id,hash)]);
-}else{
-const m=await raw.prepare('SELECT id,email FROM members WHERE id=?').bind(x.id).first<{id:string;email:string}>();if(!m||m.email.toLowerCase()===OWNER)return fail('Employee not found',404);
-await raw.batch([raw.prepare("INSERT INTO auth_accounts (id,email,role,member_id,password_hash) VALUES (?,?,'employee',?,?) ON CONFLICT(member_id) DO UPDATE SET password_hash=excluded.password_hash,must_change_password=1").bind(crypto.randomUUID(),m.email.toLowerCase(),m.id,hash),raw.prepare('DELETE FROM auth_sessions WHERE account_id IN (SELECT id FROM auth_accounts WHERE member_id=?)').bind(m.id)]);
-}}
+try { await manageEmployee(x); } catch(error) { return fail(error instanceof Error ? error.message : 'Employee update failed.'); }
 await log(a,'team',x.id||'',x.action==='reset_password'?'Employee password reset':x.action==='add_member'?'Employee login created':'Employee access updated');return Response.json({ok:true});
 }
 if(x.action==='create_task'){if(!a.admin)return fail('Superadmin access required',403);if(!str(x.title,180)||!str(x.description,6000)||!str(x.assigneeId,100)||!['low','normal','high','urgent'].includes(x.priority)||!/^\d{4}-\d{2}-\d{2}$/.test(x.dueDate)||Number.isNaN(Date.parse(x.dueDate)))return fail('Check the title, instructions, employee, priority and deadline.');const m=(await db.select().from(members).where(and(eq(members.id,x.assigneeId),eq(members.active,'yes'))))[0];if(!m)return fail('Choose an active employee.');let form;try{form=validateFormSchema(x.formSchema)}catch(e){return fail(e instanceof Error?e.message:'Invalid task form.')}const id=crypto.randomUUID();await db.insert(tasks).values({id,formSchema:JSON.stringify(form),title:x.title.trim(),description:x.description.trim(),assigneeId:m.id,priority:x.priority,dueDate:x.dueDate,status:'todo',createdAt:now,updatedAt:now});await log(a,'task',id,`${['high','urgent'].includes(x.priority)?x.priority.toUpperCase()+' PRIORITY — ':''}New task assigned: ${x.title.trim()}`);return Response.json({ok:true});}
