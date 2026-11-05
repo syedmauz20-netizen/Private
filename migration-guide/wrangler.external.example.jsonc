@@ -1,0 +1,11 @@
+// Future independent Cloudflare hosting shape, not an active deployment config.
+// Replace placeholders and adapt authentication/build integration before deployment.
+{
+  "name": "remoteworknest-independent",
+  "main": "../dist/server/index.js",
+  "compatibility_date": "2026-05-15",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {"directory": "../dist/client", "binding": "ASSETS"},
+  "d1_databases": [{"binding": "DB", "database_name": "YOUR_NEW_DATABASE", "database_id": "REPLACE_WITH_NEW_DATABASE_ID"}],
+  "r2_buckets": [{"binding": "BUCKET", "bucket_name": "YOUR_NEW_PRIVATE_CV_BUCKET"}]
+}

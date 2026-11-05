@@ -1,0 +1,46 @@
+import {strict as assert} from 'node:assert';
+import ts from 'typescript';
+import {readFileSync} from 'node:fs';
+const transpile=file=>ts.transpileModule(readFileSync(file,'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const forms=await import('data:text/javascript;base64,'+Buffer.from(transpile('lib/task-forms.ts')).toString('base64'));
+const policy=await import('data:text/javascript;base64,'+Buffer.from(transpile('lib/workspace-policy.ts')).toString('base64'));
+assert.equal(policy.validWorkUrl('javascript:alert(1)'),false);
+assert.equal(policy.validWorkUrl('data:text/html,example'),false);
+assert.equal(policy.validWorkUrl('https://user:pass@example.com/file'),false);
+assert.equal(policy.validWorkUrl('https://example.com/work'),true);
+assert.deepEqual(policy.cleanFocusIds('not json'),[]);
+assert.deepEqual(policy.cleanFocusIds('["a",3,null,"b"]'),['a','b']);
+assert.equal(policy.canUseEmployeeRecord({admin:false,memberId:'a'},'b'),false);
+const table=name=>new Proxy({name},{get(t,k){return k==='name'?name:{table:name,field:k}}});
+const tables=Object.fromEntries(['members','tasks','activity','taskComments','workSubmissions','employeeRequests','workspaceResources','taskDrafts'].map(n=>[n,table(n)]));
+const rows={members:[{id:'a',active:'yes',focusTasks:'[]'},{id:'b',active:'yes',focusTasks:'[]'}],tasks:[{id:'ta',assigneeId:'a',status:'todo',title:'A task'},{id:'tb',assigneeId:'b',status:'todo',title:'B task'}],activity:[{id:'fa',kind:'task',entityId:'ta',createdAt:'2026-11-01'},{id:'fb',kind:'task',entityId:'tb',createdAt:'2026-11-01'}],workSubmissions:[{id:'sa',memberId:'a'},{id:'sb',memberId:'b'}],employeeRequests:[{id:'ra',memberId:'a'},{id:'rb',memberId:'b'}],workspaceResources:[{id:'public-guide',active:'yes'},{id:'draft-guide',active:'no'}]};
+let writes=0;
+const eq=(c,v)=>r=>r[c.field]===v;const and=(...f)=>r=>f.every(fn=>fn(r));const inArray=(c,v)=>r=>v.includes(r[c.field]);
+const query=()=>{let name,where=()=>true;const q={from(t){name=t.name;return q},where(f){where=f;return q},orderBy(){return q},limit(){return q},then(resolve,reject){return Promise.resolve((rows[name]||[]).filter(where)).then(resolve,reject)}};return q};
+const db={select:query,update:()=>{writes++;throw Error('Unexpected write')},insert:()=>{writes++;throw Error('Unexpected write')},batch:()=>{writes++;throw Error('Unexpected write')}};
+const code=transpile('app/api/workspace/route.ts').replace(/^import .*;\s*$/gm,'').replaceAll('export async function ','async function ');
+const create=actor=>new Function('sameOrigin','portalActor','getDb',...Object.keys(tables),'eq','and','desc','inArray','validWorkUrl','cleanFocusIds','readTaskForm','validateTaskAnswers',code+';return {GET,POST}')(r=>r.headers.get('origin')===new URL(r.url).origin,async()=>actor,()=>db,...Object.values(tables),eq,and,x=>x,inArray,policy.validWorkUrl,policy.cleanFocusIds,forms.readTaskForm,forms.validateTaskAnswers);
+const employee={admin:false,memberId:'a',userId:'fixture-a',displayName:'Fixture employee'};
+const api=create(employee);
+let r=await api.GET(new Request('https://example.test/api/workspace?memberId=b'));assert.equal(r.status,200);let j=await r.json();assert.equal(j.member.id,'a');assert.deepEqual(j.requests.map(x=>x.id),['ra']);assert.deepEqual(j.submissions.map(x=>x.id),['sa']);assert.deepEqual(j.feed.map(x=>x.id),['fa']);assert.deepEqual(j.resources.map(x=>x.id),['public-guide']);
+const post=x=>new Request('https://example.test/api/workspace',{method:'POST',headers:{Origin:'https://example.test','Content-Type':'application/json'},body:JSON.stringify(x)});
+for(const action of ['save_resource','toggle_resource','reply_request']){r=await api.POST(post({action}));assert.equal(r.status,403)}
+for(const action of ['save_task_form','toggle_focus']){r=await api.POST(post({action,taskId:'tb',url:'https://example.com',note:'Test'}));assert.equal(r.status,404)}
+r=await create(null).GET(new Request('https://example.test/api/workspace'));assert.equal(r.status,403);
+r=await api.POST(post({action:'save_profile',name:'A',timezone:'Bad/Zone',bio:'',skills:'',availability:''}));assert.equal(r.status,400);
+assert.equal(writes,0);
+console.log('Employee workspace checks passed: personal data scoping, ignored cross-employee query, published-only resources, task ownership, admin actions denied, unsafe URLs rejected and time-zone validation. Isolated unit tests; no authenticated network calls.');
+// Exercise successful employee writes against isolated in-memory repositories.
+db.insert=t=>({values:v=>{let done=false;const run=()=>{if(!done){writes++;(rows[t.name]??=[]).push(v);done=true}return v};return {then:(resolve,reject)=>Promise.resolve(run()).then(resolve,reject),onConflictDoUpdate:async cfg=>{writes++;const old=(rows[t.name]||[]).find(r=>r.id===v.id);if(old)Object.assign(old,cfg.set);else (rows[t.name]??=[]).push(v);done=true;return v}}}});
+db.update=t=>({set:v=>({where:async f=>{writes++;for(const r of (rows[t.name]||[]).filter(f))Object.assign(r,v)}})});
+db.batch=async list=>Promise.all(list);
+r=await api.POST(post({action:'create_request',memberId:'b',category:'access',subject:'Test tool access',body:'Synthetic support request'}));assert.equal(r.status,200);assert.equal(rows.employeeRequests.at(-1).memberId,'a');
+r=await api.POST(post({action:'save_profile',memberId:'b',active:'no',taskCapacity:'100',name:'Fixture A updated',timezone:'Asia/Karachi',bio:'Synthetic bio',skills:'Spreadsheets',availability:'Weekday evenings'}));assert.equal(r.status,200);assert.equal(rows.members[0].name,'Fixture A updated');assert.equal(rows.members[0].active,'yes');assert.equal(rows.members[1].id,'b');assert.equal(rows.members[1].bio,undefined);
+const before=writes;r=await api.POST(post({action:'save_task_form',taskId:'ta',mode:'submit',answers:{fields:{},rows:[]}}));assert.equal(r.status,400);assert.equal(writes,before);
+r=await api.POST(post({action:'save_task_form',taskId:'ta',mode:'draft',answers:{fields:{workCompleted:'Partial'},rows:[]}}));assert.equal(r.status,200);assert.equal(rows.taskDrafts.at(-1).memberId,'a');assert.equal(rows.tasks[0].status,'todo');
+const complete={fields:{workCompleted:'Completed synthetic task',result:'Completed as instructed',findings:'Collected information',exceptions:''},rows:[]};
+r=await api.POST(post({action:'save_task_form',memberId:'b',taskId:'ta',mode:'submit',answers:complete}));assert.equal(r.status,200);assert.equal(rows.workSubmissions.at(-1).memberId,'a');assert.equal(rows.workSubmissions.at(-1).taskId,'ta');assert.equal(rows.workSubmissions.at(-1).url,'');assert.deepEqual(JSON.parse(rows.workSubmissions.at(-1).formData),complete);assert.ok(JSON.parse(rows.workSubmissions.at(-1).formSchema).fields.length);assert.equal(rows.tasks[0].status,'review');assert.ok(rows.taskComments.at(-1).body.includes('FORM SUBMITTED'));
+rows.tasks[0].status='completed';r=await api.POST(post({action:'save_task_form',taskId:'ta',mode:'draft',answers:complete}));assert.equal(r.status,400);rows.tasks[0].status='review';
+r=await api.POST(post({action:'toggle_focus',taskId:'ta'}));assert.equal(r.status,200);assert.deepEqual(JSON.parse(rows.members[0].focusTasks),['ta']);
+r=await api.POST(post({action:'read_inbox'}));assert.equal(r.status,200);assert.ok(rows.members[0].inboxReadAt);assert.equal(rows.members[1].inboxReadAt,undefined);
+console.log('Employee success-path checks passed: request ownership, safe profile edits, inline form draft + versioned review submission, personal focus and inbox read persistence.');

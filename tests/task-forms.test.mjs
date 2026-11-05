@@ -1,0 +1,17 @@
+import {strict as assert} from 'node:assert';
+import ts from 'typescript';
+import {readFileSync} from 'node:fs';
+const js=ts.transpileModule(readFileSync('lib/task-forms.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {standardTaskForm,rentalSurveyForm,validateFormSchema,validateTaskAnswers,readTaskForm}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+const s=standardTaskForm();assert.equal(readTaskForm('{}').title,s.title);assert.ok(validateTaskAnswers(s,{fields:{},rows:[]},true).error);assert.ok(validateTaskAnswers(s,{fields:{},rows:[]},false).answers);
+const valid={fields:{workCompleted:'Finished',result:'Completed as instructed',findings:'Verified',exceptions:''},rows:[]};assert.deepEqual(validateTaskAnswers(s,valid,true).answers,valid);
+assert.ok(validateTaskAnswers(s,{fields:{...valid.fields,result:'Made up option'},rows:[]},true).error);
+assert.ok(validateTaskAnswers(s,{fields:valid.fields,rows:[{}]},true).error);
+assert.throws(()=>validateFormSchema({...s,fields:[...s.fields,s.fields[0]]}));
+const rental=rentalSurveyForm();assert.ok(rental.table.columns.length>=12);const fields={propertyName:'Synthetic property',managementCompany:'Synthetic management',spokeWith:'Fixture contact',contactPhone:'',asOf:'2026-11-05',specials:'No',prorate:'',nonRentSpecials:'',comments:''};assert.ok(validateTaskAnswers(rental,{fields,rows:[]},true).error);
+const response={fields,rows:[{floorPlan:'Studio',sqft:'395',phase:'',rent:'1200',specialType:'No special',specialAmount:'',leaseTerm:'12',furnished:'No',...Object.fromEntries(Array.from({length:8},(_,i)=>['utility'+i,'Resident']))}]};assert.ok(validateTaskAnswers(rental,response,true).answers);
+assert.ok(validateTaskAnswers(rental,{fields,rows:[{...response.rows[0],rent:'-100'}]},true).error);
+assert.ok(validateTaskAnswers(rental,{fields,rows:[{...response.rows[0],sqft:'not a number'}]},false).error);
+assert.ok(validateTaskAnswers(rental,{fields,rows:Array.from({length:41},()=>response.rows[0])},false).error);
+const employee=readFileSync('app/dashboard/employee.tsx','utf8');assert.ok(employee.includes("setTab('Task Workspace')"));assert.ok(!employee.includes("setDialog('task')"));assert.ok(!employee.includes('Work / deliverable link'));
+console.log('Task-form validation and routing checks passed: required answers, partial drafts, dropdown values, rental-table rows, numeric checks, bounded response, inline task navigation and no link requirement.');

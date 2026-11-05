@@ -1,0 +1,15 @@
+import {strict as assert} from 'node:assert';
+import ts from 'typescript';
+import {readFileSync} from 'node:fs';
+const js=ts.transpileModule(readFileSync('lib/portal-permissions.ts','utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext}}).outputText;
+const {canAccessTask,canSetTaskStatus}=await import('data:text/javascript;base64,'+Buffer.from(js).toString('base64'));
+assert.equal(canAccessTask({admin:false,memberId:'a'},{assigneeId:'b'}),false);
+assert.equal(canAccessTask({admin:false,memberId:'a'},{assigneeId:'a'}),true);
+assert.equal(canAccessTask({admin:true,memberId:''},{assigneeId:'b'}),true);
+assert.equal(canSetTaskStatus(false,'in_progress','review'),true);
+assert.equal(canSetTaskStatus(false,'review','completed'),false);
+assert.equal(canSetTaskStatus(false,'completed','in_progress'),false);
+assert.equal(canSetTaskStatus(true,'review','completed'),true);
+assert.equal(canSetTaskStatus(true,'completed','todo'),true);
+assert.equal(canSetTaskStatus(true,'todo','invented'),false);
+console.log('9 permission checks passed: task isolation, submission, approval and reopening. No network or authenticated requests used.');

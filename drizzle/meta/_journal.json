@@ -1,0 +1,55 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1793660543310,
+      "tag": "0000_motionless_blonde_phantom",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1793661563943,
+      "tag": "0001_tidy_switch",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1793823485612,
+      "tag": "0002_watery_nightcrawler",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1793824360604,
+      "tag": "0003_lyrical_harry_osborn",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1793827930009,
+      "tag": "0004_naive_marten_broadcloak",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1793830000000,
+      "tag": "0005_password_auth",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1793838331187,
+      "tag": "0006_account_profiles",
+      "breakpoints": true
+    }
+  ]
+}
